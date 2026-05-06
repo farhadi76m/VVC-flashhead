@@ -180,11 +180,15 @@ class FlashHeadPipeline:
         self.cond_image_tensor_dict = {}
         self.ref_img_latent_dict = {}
         for i, (person_name, cond_image_pil) in enumerate(self.cond_image_dict.items()):
-            cond_image_tensor = resize_and_centercrop(cond_image_pil, (self.target_h, self.target_w)).to(self.device, dtype=self.param_dtype) # 1 C 1 H W
+            cond_image_tensor = resize_and_centercrop(cond_image_pil[0], (self.target_h, self.target_w)).to(self.device, dtype=self.param_dtype) # 1 C 1 H W
             cond_image_tensor = (cond_image_tensor / 255 - 0.5) * 2
 
             self.cond_image_tensor_dict[person_name] = cond_image_tensor
-
+            if use_face_crop : 
+                self.cond_image_tensor_dict['meta'] = {
+                    'original_image' : cond_image_pil[1],
+                    'boxes' : cond_image_pil[2]
+                }
             video_frames = cond_image_tensor.repeat(1, 1, self.frame_num, 1, 1)
             self.ref_img_latent_dict[person_name] = self.vae.encode(video_frames) # (16, 9, 64, 64) / (128, 5, 16, 16)
             if i == 0:

@@ -6,6 +6,8 @@
 import os
 from PIL import Image
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from flash_head.utils.cpu_face_handler import CPUFaceHandler
 
@@ -104,7 +106,69 @@ def process_image(
         # 调整大小
         crop_face = crop_face.resize(target_size)
         
-        return crop_face
+        return crop_face, image, boxes_abs
             
     except Exception as e:
         raise ValueError(f"Error processing {input_path}: {e}")
+
+
+
+def postprocess_image(video, original_image, boxes, face_ratio=2.0,):
+    """
+    Paste cropped/generated face back into original image using torch + CUDA.
+
+    Args:
+        video:
+            Tensor (H, W, C) or (C, H, W)
+            Example: (512, 512, 3)
+
+        original_image:
+            PIL image, numpy array, or tensor
+            Original full frame.
+
+        boxes:
+            [x1, y1, x2, y2]
+
+    Returns:
+        torch.Tensor -> (H, W, C), uint8
+    """
+
+    
+    original_image = torch.from_numpy(np.array(original_image)).to(video.device)
+    original_image = original_image.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+    
+    
+    x1, y1, x2, y2 = map(int, boxes)
+    
+    h = y2 - y1
+    w = x2 - x1
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2 
+
+    new_h = h * face_ratio
+    new_w = w * face_ratio
+    
+    x1 = int(cx - new_w / 2)   
+    y1 = int(cy - new_h / 2)
+    x2 = int(cx + new_w / 2)
+    y2 = int(cy + new_h / 2)
+
+    target_h = y2 - y1
+    target_w = x2 - x1
+
+    video = video.permute(0,3,1,2) # (B, H, W, C) -> (B, C, H, W)
+    video = F.interpolate(
+        video,
+        size=(target_h, target_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    
+    result = original_image.unsqueeze(0).repeat(video.shape[0], 1, 1, 1)
+    result[:,:, y1:y2, x1:x2] = video
+    result = result.clamp(0, 255).to(torch.uint8).permute(0,2,3,1)
+    # from PIL import Image
+    # Image.fromarray(result.cpu()[0].permute(1,2,0).numpy()).save('out.png')
+
+    return result
