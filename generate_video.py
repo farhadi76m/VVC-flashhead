@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime
 
 from flash_head.inference import get_pipeline, get_base_data, get_infer_params, get_audio_embedding, run_pipeline
-from flash_head.utils.facecrop import postprocess_image
+from flash_head.utils.facecrop import postprocess_image, postprocess_image2
 def _validate_args(args):
     # Basic check
     assert args.ckpt_dir is not None, "Please specify FlashHead model checkpoint directory."
@@ -185,7 +185,7 @@ def generate(args):
 
             # inference
             video = run_pipeline(pipeline, audio_embedding)
-            video = postprocess_image(video, 
+            video = postprocess_image2(video, 
                 pipeline.cond_image_tensor_dict['meta']['original_image'],
                 pipeline.cond_image_tensor_dict['meta']['boxes']
                 )
