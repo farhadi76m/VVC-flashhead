@@ -195,7 +195,6 @@ def postprocess_image2(video, original_image, boxes, face_ratio=2.0):
     cx = (x1 + x2) / 2
     cy = (y1 + y2) / 2
     w  = x2 - x1
-    breakpoint()
     # Mirror get_scaled_bbox exactly
     new_size    = w * face_ratio
     dis_x_left  = new_size * 0.5
