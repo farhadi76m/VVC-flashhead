@@ -28,7 +28,6 @@ def get_scaled_bbox(
         裁剪后的人脸图像
     """
     x1, y1, x2, y2 = bbox
-    
 
     # Calculate center point
     center_x = (x1 + x2) / 2
@@ -38,8 +37,8 @@ def get_scaled_bbox(
     width = x2 - x1
 
     # Scale width and height
-    new_width = 1.171875*width * ratio
-    new_height = 1.5625*width * ratio
+    new_width = width * ratio
+    new_height = new_width
 
     # tile pix
     dis_x_left = new_width * 0.5
@@ -60,7 +59,7 @@ def get_scaled_bbox(
 def process_image(
     input_path,
     face_ratio=2.0,
-    target_size=(600, 800),
+    target_size=(512, 512),
 ):
     """
     处理单张图像，进行人脸检测和裁剪
@@ -187,7 +186,7 @@ def postprocess_image2(video, original_image, boxes, face_ratio=2.0):
     original_tensor = original_tensor.permute(2, 0, 1)  # (C, H, W)
 
     # Convert relative → absolute, matching process_image exactly
-
+    
     x1 = boxes[0][0] * img_w
     y1 = boxes[0][1] * img_h
     x2 = boxes[0][2] * img_w
