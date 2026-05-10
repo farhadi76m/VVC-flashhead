@@ -28,6 +28,7 @@ def get_scaled_bbox(
         裁剪后的人脸图像
     """
     x1, y1, x2, y2 = bbox
+    
 
     # Calculate center point
     center_x = (x1 + x2) / 2
@@ -37,8 +38,8 @@ def get_scaled_bbox(
     width = x2 - x1
 
     # Scale width and height
-    new_width = width * ratio
-    new_height = new_width
+    new_width = 1.171875*width * ratio
+    new_height = 1.5625*width * ratio
 
     # tile pix
     dis_x_left = new_width * 0.5
@@ -59,7 +60,7 @@ def get_scaled_bbox(
 def process_image(
     input_path,
     face_ratio=2.0,
-    target_size=(512, 512),
+    target_size=(600, 800),
 ):
     """
     处理单张图像，进行人脸检测和裁剪
