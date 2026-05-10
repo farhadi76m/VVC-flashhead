@@ -186,7 +186,7 @@ def postprocess_image2(video, original_image, boxes, face_ratio=2.0):
     original_tensor = original_tensor.permute(2, 0, 1)  # (C, H, W)
 
     # Convert relative → absolute, matching process_image exactly
-    
+
     x1 = boxes[0][0] * img_w
     y1 = boxes[0][1] * img_h
     x2 = boxes[0][2] * img_w

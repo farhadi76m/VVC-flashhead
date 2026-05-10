@@ -185,10 +185,11 @@ def generate(args):
 
             # inference
             video = run_pipeline(pipeline, audio_embedding)
-            video = postprocess_image2(video, 
-                pipeline.cond_image_tensor_dict['meta']['original_image'],
-                pipeline.cond_image_tensor_dict['meta']['boxes']
-                )
+            if args.use_face_crop : 
+                video = postprocess_image2(video, 
+                    pipeline.cond_image_tensor_dict['meta']['original_image'],
+                    pipeline.cond_image_tensor_dict['meta']['boxes']
+                    )
 
             video = video[motion_frames_num:]
             
