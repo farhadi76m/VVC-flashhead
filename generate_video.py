@@ -14,6 +14,7 @@ from collections import deque
 from datetime import datetime
 
 from flash_head.inference import get_pipeline, get_base_data, get_infer_params, get_audio_embedding, run_pipeline
+# from flash_head.utils.facecrop import 
 
 def _validate_args(args):
     # Basic check
@@ -110,7 +111,6 @@ def generate(args):
     pipeline = get_pipeline(world_size=world_size, ckpt_dir=args.ckpt_dir, wav2vec_dir=args.wav2vec_dir, model_type=args.model_type)
     get_base_data(pipeline, cond_image_path_or_dir=args.cond_image_dir if args.cond_image_dir is not None else args.cond_image, base_seed=args.base_seed, use_face_crop=args.use_face_crop)
     infer_params = get_infer_params()
-
     sample_rate = infer_params['sample_rate']
     tgt_fps = infer_params['tgt_fps']
     cached_audio_duration = infer_params['cached_audio_duration']
@@ -145,6 +145,7 @@ def generate(args):
             start_time = time.time()
 
             # inference
+            breakpoint()
             video = run_pipeline(pipeline, audio_embedding_chunk)
 
             if chunk_idx != 0:
@@ -184,7 +185,9 @@ def generate(args):
             audio_embedding = get_audio_embedding(pipeline, audio_array, audio_start_idx, audio_end_idx)
 
             # inference
+            
             video = run_pipeline(pipeline, audio_embedding)
+            breakpoint()
             video = video[motion_frames_num:]
 
             torch.cuda.synchronize()

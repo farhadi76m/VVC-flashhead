@@ -25,8 +25,8 @@ def get_cond_image_dict(cond_image_path_or_dir, use_face_crop):
     def get_image(cond_image_path, use_face_crop):
         if use_face_crop:
             try:
-                image = process_image(cond_image_path)
-                return image
+                image, origin_image, boxes = process_image(cond_image_path)
+                return image, origin_image, boxes 
             except Exception as e:
                 logger.error(f"Error processing {cond_image_path}: {e}")
         return Image.open(cond_image_path).convert("RGB")
@@ -180,7 +180,7 @@ class FlashHeadPipeline:
         self.cond_image_tensor_dict = {}
         self.ref_img_latent_dict = {}
         for i, (person_name, cond_image_pil) in enumerate(self.cond_image_dict.items()):
-            cond_image_tensor = resize_and_centercrop(cond_image_pil, (self.target_h, self.target_w)).to(self.device, dtype=self.param_dtype) # 1 C 1 H W
+            cond_image_tensor = resize_and_centercrop(cond_image_pil[0], (self.target_h, self.target_w)).to(self.device, dtype=self.param_dtype) # 1 C 1 H W
             cond_image_tensor = (cond_image_tensor / 255 - 0.5) * 2
 
             self.cond_image_tensor_dict[person_name] = cond_image_tensor

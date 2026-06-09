@@ -9,6 +9,8 @@ import numpy as np
 
 from flash_head.utils.cpu_face_handler import CPUFaceHandler
 
+import torch.nn.functional as F
+
 def get_scaled_bbox(
     bbox, img_w, img_h, ratio: float = 1.0, face_image: Image.Image = None
 ):
@@ -100,11 +102,40 @@ def process_image(
         
         # 裁剪人脸
         crop_face = get_scaled_bbox(boxes_abs, img_w, img_h, face_ratio, image)
-        
         # 调整大小
         crop_face = crop_face.resize(target_size)
-        
-        return crop_face
+        return crop_face, image, boxes_abs
             
     except Exception as e:
         raise ValueError(f"Error processing {input_path}: {e}")
+
+
+def postprocces_image(video, original_image, bboxes):
+    """
+    Args : 
+        croped face -> (512, 512)
+        original_image -> image before croping face
+        bboxes -> locataion of cropped 
+    Returns : image
+    """
+
+    original_image = torch.from_numpy(np.array(original_image))
+    original_image = original_image.to(video.device)
+    original_image = original_image.permute(2, 0, 1)
+
+    x1, y1, x2, y2 = map(int, bboxes)
+
+    target_h = y2 - y1
+    target_w = x2 - x1
+
+
+    video = video.permute(0, 3, 1, 2)
+    video = F.interpolate(
+        video,
+        size=(target_h, target_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    result  = original_image.unsqueeze(0).repeat(video.shape[0], 1, 1, 1)
+    result[:, :, y1:y2, x1:x2] = video
