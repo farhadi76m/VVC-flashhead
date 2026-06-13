@@ -29,7 +29,7 @@ from pathlib import Path
 
 import requests
 
-BASE     = "http://192.168.45.201:8002"
+BASE     = "http://localhost:8000"
 BOUNDARY = b"flashhead"
 
 
