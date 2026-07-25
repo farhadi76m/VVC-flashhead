@@ -1,209 +1,244 @@
-# FlashHead API — Docker (Linux / WSL2 + GPU)
+# FlashHead API — Docker
 
-Containerized build of the **FlashHead streaming REST API** (`server2.py`).
-See [`../README_API.md`](../README_API.md) for the API itself.
+Talking-head video generation. Send a face image + audio, get MP4 video segments
+streamed back as they are generated.
 
-The image bundles the full CUDA/PyTorch runtime **and the model weights** — the Dockerfile
-downloads them from Hugging Face during `docker build`, so there is nothing to fetch by hand
-and nothing to mount at runtime.
-
-| | |
-|---|---|
-| Base | `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04` |
-| Python | 3.10 |
-| Torch | `2.7.1+cu128` · torchvision `0.22.1` · xformers `0.0.31` |
-| Attention | `flash-attn 2.8.0.post2` (prebuilt `cu12torch2.7cxx11abiTRUE-cp310` wheel) |
-| Deps | pinned from a known-good environment → [`requirements-lock.txt`](./requirements-lock.txt) |
-| Weights | downloaded at build time into `/app/models` (`MODEL_VARIANT=lite\|pro\|all`) |
-| Exposes | `8000` |
+- **Model:** lite — baked into the image, nothing to download at runtime
+- **Face crop:** on by default, nothing to configure
+- **Port:** 8000
 
 ---
 
-## 1. Prerequisites (WSL2)
+## 1. Requirements
 
-You already run FlashHead bare-metal in WSL, so the GPU is set up. For Docker you also need
-the **NVIDIA Container Toolkit** inside the WSL distro so containers can see the GPU:
+- NVIDIA GPU with ~12 GB free VRAM
+- NVIDIA driver 525 or newer
+- Docker with GPU access
+
+Check the GPU is visible:
 
 ```bash
-# one-time: install the NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker      # or: Docker Desktop → restart
-
-# verify the container can see the GPU
-docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+nvidia-smi
 ```
 
-> Docker Desktop users: enable the WSL2 backend and GPU support. The Windows NVIDIA driver
-> provides the GPU to WSL — do **not** install a driver inside the container.
+**Pick your compose file.** Every command below uses `docker/docker-compose.yml`,
+which is set up for **Docker Desktop on WSL2**. On a **native Linux** host use
+`docker/docker-compose-linux.yml` instead — same settings, different GPU
+passthrough. See [the note at the end](#note-on-gpu-passthrough).
 
 ---
 
 ## 2. Build
 
-From the **repo root** (the build context must include `flash_head/` and `server2.py`):
+Run from the repo root, **not** from `docker/`:
 
 ```bash
-docker build -f docker/Dockerfile -t flashhead-api:latest .
+docker compose -f docker/docker-compose.yml build
 ```
 
-The local `models/` directory is excluded via [`.dockerignore`](../.dockerignore), so the
-build context stays a few MB — the weights come from Hugging Face inside the build, not from
-your disk. The first build pulls the CUDA base + torch + flash-attn and the weights (tens of
-GB, expect a while); subsequent builds are cached, and editing code does **not** re-download
-the weights.
-
-### Which weights get baked in
-
-| Model | Source |
-|-------|--------|
-| `SoulX-FlashHead-1_3B` | 🤗 [huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B) |
-| `wav2vec2-base-960h` | 🤗 [huggingface.co/facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h) |
-
-Only what the selected variant actually loads is fetched:
-
-| `--build-arg MODEL_VARIANT=` | Fetched from the checkpoint repo | Weights size |
-|---|---|---|
-| `lite` *(default)* | `Model_Lite/` + `VAE_LTX/` | ≈ 7.3 GB |
-| `pro` | `Model_Pro/` + `VAE_Wan/` | ≈ 6.2 GB |
-| `all` | both of the above | ≈ 13.5 GB |
-
-plus ≈ 0.4 GB of wav2vec2 (`model.safetensors` only — the TF/`.bin` duplicates are skipped).
-
-```bash
-# image that can serve both lite and pro
-docker build -f docker/Dockerfile --build-arg MODEL_VARIANT=all -t flashhead-api:all .
-```
-
-`MODEL_VARIANT` must cover whatever `MODEL_TYPE` you run with — the entrypoint checks this on
-boot and tells you to rebuild rather than failing halfway through model load.
-
-### Building without the weights
-
-To keep the old behaviour (slim image, weights mounted from the host):
-
-```bash
-docker build -f docker/Dockerfile --build-arg DOWNLOAD_MODELS=0 -t flashhead-api:slim .
-
-# then fetch the weights on the host, from the repo root
-pip install huggingface_hub
-hf download Soul-AILab/SoulX-FlashHead-1_3B --local-dir ./models/SoulX-FlashHead-1_3B
-hf download facebook/wav2vec2-base-960h     --local-dir ./models/wav2vec2-base-960h
-```
-
-then add `-v "$(pwd)/models:/app/models:ro"` to the `docker run` below.
+Takes 20–40 minutes and downloads ~7.7 GB of weights into the image. Final image
+is about 23 GB. You only do this once.
 
 ---
 
 ## 3. Run
 
-The container needs the GPU; the weights are already inside it:
-
 ```bash
-docker run --rm --gpus all \
-    -p 8000:8000 \
-    --shm-size=8g \
-    --name flashhead-api \
-    flashhead-api:latest
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-> Do **not** mount `-v .../models:/app/models` on a normal build — an empty or partial host
-> directory shadows the baked-in weights and the container will refuse to start.
+The model loads at startup and is ready in about **20 seconds**.
 
-On boot it auto-loads the **lite** model and serves on `:8000`. When you see the model
-finish loading, it's ready. Check it:
+**Important:** the *first* generate request is slow — around **2 minutes** —
+because PyTorch compiles the model on first use. Every request after that is
+fast (~15 seconds). Send one throwaway request after startup so the first real
+user does not wait.
+
+---
+
+## 4. Check it works
 
 ```bash
 curl http://localhost:8000/model/status
-# {"loaded":true,"model_type":"lite", ...}
 ```
 
-Open the interactive docs at **http://localhost:8000/docs**.
+Expected:
 
-### Or with Compose
+```json
+{"loaded":true,"model_type":"lite", ...}
+```
+
+`"loaded":true` means it is ready. Interactive API docs: <http://localhost:8000/docs>
+
+---
+
+## 5. Use the API
+
+Three steps: create a session with a face image, send audio, delete the session.
+
+### Create a session
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build
+curl -X POST http://localhost:8000/session \
+  -F "image=@face.png"
+```
+
+```json
+{"session_id":"a1b2c3d4-...","status":"ready"}
+```
+
+Keep the `session_id`. One session = one person's face. Reuse it for every turn
+of the conversation — the image is only processed once.
+
+### Generate video from audio
+
+```bash
+curl -X POST http://localhost:8000/session/<SESSION_ID>/generate \
+  -F "audio=@speech.wav" \
+  -o output.bin
+```
+
+Audio should be **WAV, 16 kHz, mono**.
+
+The response is a `multipart/x-mixed-replace` stream. Each part is a complete MP4
+covering ~3 seconds of video, sent as soon as it is ready — so playback can start
+before the full clip is finished. Each part carries an `X-Segment-Index` header.
+
+Measured on an RTX 4090: ~40 seconds of speech → 13 segments in **14 seconds**
+(after warmup). Generation is faster than real time, so playback keeps up.
+
+### Delete the session
+
+```bash
+curl -X DELETE http://localhost:8000/session/<SESSION_ID>
+```
+
+Idle sessions are cleaned up automatically after 5 minutes.
+
+### Working example
+
+`test_stream.py` shows how to consume the stream and joins the segments into one
+playable file:
+
+```bash
+python test_stream.py live face.png speech.wav
 ```
 
 ---
 
-## 4. Configuration (environment variables)
-
-Pass with `-e VAR=value` (or the `environment:` block in Compose):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MODEL_TYPE` | `lite` | `lite` (fast) or `pro` (higher quality) — must be covered by the image's `MODEL_VARIANT` |
-| `PORT` | `8000` | Server port (also update `-p`) |
-| `CKPT_DIR` | `/app/models/SoulX-FlashHead-1_3B` | Checkpoint dir (inside the container) |
-| `WAV2VEC_DIR` | `/app/models/wav2vec2-base-960h` | Wav2Vec2 dir |
-| `IDLE_TIMEOUT` | `300` | Seconds before an idle session is auto-deleted |
-| `GC_INTERVAL` | `60` | Session GC check interval |
-| `AUTOLOAD` | `1` | `0` = start without loading; load later via `POST /model/load` |
+## 6. Day-to-day commands
 
 ```bash
-# example: run the PRO model (image must be built with MODEL_VARIANT=pro or =all)
-docker run --rm --gpus all -p 8000:8000 --shm-size=8g \
-    -e MODEL_TYPE=pro \
-    flashhead-api:all
+# logs
+docker compose -f docker/docker-compose.yml logs -f
+
+# stop
+docker compose -f docker/docker-compose.yml down
+
+# start
+docker compose -f docker/docker-compose.yml up -d
+
+# restart
+docker compose -f docker/docker-compose.yml restart
 ```
+
+After changing code (`server2.py`, `flash_head/`), rebuild and restart:
+
+```bash
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d
+```
+
+Code changes rebuild in under a minute — the weights are cached and are not
+downloaded again.
 
 ---
 
-## 5. Test the container
+## 7. All endpoints
 
-The API is on `localhost:8000`, so drive it **from the host** exactly like the bare-metal
-server (`test_stream.py` targets port 8000):
-
-```bash
-# first frame of the sample video → face image, then stream the audio
-ffmpeg -y -i examples/example.mp4 -vframes 1 examples/first_frame.png
-python test_stream.py live examples/first_frame.png examples/example.wav output.mp4
-```
-
-Or with cURL:
-
-```bash
-BASE=http://localhost:8000
-SESSION=$(curl -s -X POST $BASE/session \
-    -F "image=@examples/first_frame.png" -F "use_face_crop=true" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
-curl -X POST "$BASE/session/$SESSION/generate" \
-    -F "audio=@examples/example.wav" --output stream_output.bin
-python test_stream.py split stream_output.bin output.mp4
-```
-
-**Verified result** (RTX 4090, lite model, in-container): the sample `example.wav` (36.5 s)
-streams back as 13 MP4 segments; warm generation ≈ **11 s (~3.2× real-time)**. See
-[`../README_API.md`](../README_API.md) for the full benchmark.
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/model/status` | Is the model loaded |
+| `POST` | `/session` | Create session (upload face image) |
+| `POST` | `/session/{id}/generate` | Audio in → video segments out |
+| `PATCH` | `/session/{id}/image` | Change the face mid-session |
+| `GET` | `/session/{id}/status` | Session info |
+| `DELETE` | `/session/{id}` | Delete session |
+| `GET` | `/sessions` | List active sessions |
 
 ---
 
-## 6. Notes & troubleshooting
+## 8. Troubleshooting
 
-- **`could not select device driver "" with capabilities: [[gpu]]`** → the NVIDIA Container
-  Toolkit isn't installed/configured; redo step 1 and restart Docker.
-- **First request is slow (~80 s)** — one-time CUDA warmup; every later request is ~2 s to
-  first segment. Send a throwaway request after startup to pre-warm.
-- **`AUTOLOAD=1 but model directories were not found`** — on a normal build the weights are
-  in the image, so this means a host `-v .../models:/app/models` mount is shadowing them
-  (drop it), or the image was built with `DOWNLOAD_MODELS=0` (then the mount is required).
-  `-e AUTOLOAD=0` boots without a model and lets you load one via the API.
-- **`MODEL_TYPE=pro needs .../Model_Pro`** — the image was built `lite`-only. Rebuild with
-  `--build-arg MODEL_VARIANT=pro` (or `=all`).
-- **Build fails downloading weights** — Hugging Face rate limit or a dropped connection.
-  Re-run the build (finished layers are cached); the download step resumes from scratch but
-  the CUDA/torch layers do not rebuild.
-- **One model / one GPU** — inference is serialized on a single pipeline lock. For
-  concurrency run multiple containers (one GPU each) behind a load balancer.
-- **Image size** (~23 GB for `lite`, ~29 GB for `all`) — CUDA + torch runtime plus the baked
-  weights. Build with `--build-arg DOWNLOAD_MODELS=0` for the ~15 GB weightless image.
-  `/dev/shm` is raised to 8 GB (`--shm-size=8g`) to avoid PyTorch shared-memory errors.
-- **Driver/CUDA:** the container's CUDA 12.8 userspace runs on the host driver via the
-  toolkit — the same combination already working on this machine bare-metal.
+**`{"loaded":false}` or connection refused**
+
+Still starting — give it ~20 seconds. If it stays down, check the logs:
+
+```bash
+docker compose -f docker/docker-compose.yml logs -f
+```
+
+**First request takes ~2 minutes**
+
+Normal. PyTorch compiles the model on first use; later requests take ~15 s.
+See section 3.
+
+**Port 8000 already in use**
+
+Edit `docker/docker-compose.yml` and change the left-hand number:
+
+```yaml
+ports:
+  - "8100:8000"
+```
+
+**GPU not detected / CUDA errors**
+
+Confirm the container sees the GPU:
+
+```bash
+docker exec flashhead-api python -c "import torch; print(torch.cuda.is_available())"
+```
+
+Must print `True`. If it prints `False`, see the note below.
+
+**Out of memory**
+
+Run only one generate request at a time per GPU. Lite needs ~12 GB.
+
+---
+
+## Note on GPU passthrough
+
+There are two compose files — pick the one that matches your host:
+
+| Host | File |
+|---|---|
+| Docker Desktop on **WSL2** | `docker/docker-compose.yml` |
+| **Native Linux** server | `docker/docker-compose-linux.yml` |
+
+They differ only in how the GPU is handed to the container.
+
+WSL2 exposes the GPU as `/dev/dxg` instead of `/dev/nvidia*`, so the WSL2 file
+passes that device directly rather than using `gpus: all` — the NVIDIA container
+hook misdetects the mode on WSL and the container ends up with no usable GPU. It
+also mounts `/usr/lib/wsl` and sets `LD_LIBRARY_PATH` so the WSL driver libs win
+over the image's CUDA compat libs.
+
+The Linux file uses `gpus: all` and none of those workarounds — on a native host
+they would break CUDA instead of fixing it. It needs the NVIDIA Container Toolkit
+installed:
+
+```bash
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# verify
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+```
+
+`gpus:` needs Docker Compose v2.30 or newer; the file carries a commented
+`deploy:` block to use instead on older versions.
+
+The comments in both files explain the same thing.

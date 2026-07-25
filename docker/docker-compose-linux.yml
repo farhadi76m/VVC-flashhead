@@ -1,0 +1,60 @@
+# FlashHead Streaming API — Docker Compose  (native Linux host)
+# ─────────────────────────────────────────────────────────────────────────────
+# This is the NATIVE LINUX variant. For Docker Desktop on WSL2 use
+# docker/docker-compose.yml instead (it passes /dev/dxg by hand).
+#
+# Run from the repo root:
+#     docker compose -f docker/docker-compose-linux.yml up -d --build
+#
+# Requires:
+#   • NVIDIA driver 525+ on the host          (check: nvidia-smi)
+#   • NVIDIA Container Toolkit installed and wired into Docker
+#         sudo apt-get install -y nvidia-container-toolkit
+#         sudo nvidia-ctk runtime configure --runtime=docker
+#         sudo systemctl restart docker
+#     verify:  docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+#   • Docker Compose v2.30+ for the `gpus:` key (older versions: use the
+#     `deploy:` block at the bottom of this file instead).
+#
+# Model weights are downloaded by the Dockerfile during `build` — nothing to
+# fetch by hand, no host mount needed.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  flashhead-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        MODEL_VARIANT: "lite"     # lite | pro | all  (weights baked into image)
+        # DOWNLOAD_MODELS: "0"    # skip the download and mount ../models instead
+    image: flashhead-api:latest
+    container_name: flashhead-api
+    ports:
+      - "8000:8000"
+    # volumes:
+    #   # Only needed with DOWNLOAD_MODELS=0 — this mount SHADOWS the weights
+    #   # baked into the image, so leave it commented out for a normal build.
+    #   - ../models:/app/models:ro
+    environment:
+      MODEL_TYPE: "lite"          # lite | pro
+      # AUTOLOAD: "0"             # uncomment to boot WITHOUT loading a model
+      # PORT: "8000"
+      # Pick specific GPUs instead of `gpus: all` below, e.g. NVIDIA_VISIBLE_DEVICES: "0"
+    shm_size: "8gb"
+    restart: unless-stopped
+
+    # GPU access on a native Linux host: the NVIDIA container hook finds
+    # /dev/nvidia* plus a matching kernel driver, so the normal path works and
+    # none of the WSL2 workarounds (/dev/dxg, /usr/lib/wsl, LD_LIBRARY_PATH)
+    # are needed — they would in fact break CUDA here.
+    gpus: all
+
+    # Compose older than v2.30 does not understand `gpus:`. Comment the line
+    # above out and use this instead:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all          # or: device_ids: ["0"]
+    #           capabilities: [gpu]
