@@ -56,7 +56,29 @@ GB); subsequent builds are cached.
 
 ---
 
-## 3. Run
+## 3. Get the model weights
+
+The weights are **not** in the image — download them once on the host into `models/`,
+then mount that directory into the container (next step).
+
+| Model | Source |
+|-------|--------|
+| `SoulX-FlashHead-1_3B` | 🤗 [huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B) |
+| `wav2vec2-base-960h` | 🤗 [huggingface.co/facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h) |
+
+```bash
+pip install "huggingface_hub[cli]"
+# run from the repo root so the paths match the mount below
+huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B --local-dir ./models/SoulX-FlashHead-1_3B
+huggingface-cli download facebook/wav2vec2-base-960h     --local-dir ./models/wav2vec2-base-960h
+```
+
+You end up with `models/SoulX-FlashHead-1_3B/` (contains `Model_Lite/` and `Model_Pro/`)
+and `models/wav2vec2-base-960h/` — the two directories the entrypoint expects.
+
+---
+
+## 4. Run
 
 The container needs the GPU and the model weights mounted at `/app/models`:
 
@@ -87,7 +109,7 @@ docker compose -f docker/docker-compose.yml up --build
 
 ---
 
-## 4. Configuration (environment variables)
+## 5. Configuration (environment variables)
 
 Pass with `-e VAR=value` (or the `environment:` block in Compose):
 
@@ -111,7 +133,7 @@ docker run --rm --gpus all -p 8000:8000 \
 
 ---
 
-## 5. Test the container
+## 6. Test the container
 
 The API is on `localhost:8000`, so drive it **from the host** exactly like the bare-metal
 server (`test_stream.py` targets port 8000):
@@ -140,7 +162,7 @@ streams back as 13 MP4 segments; warm generation ≈ **11 s (~3.2× real-time)**
 
 ---
 
-## 6. Notes & troubleshooting
+## 7. Notes & troubleshooting
 
 - **`could not select device driver "" with capabilities: [[gpu]]`** → the NVIDIA Container
   Toolkit isn't installed/configured; redo step 1 and restart Docker.

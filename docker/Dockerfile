@@ -43,6 +43,7 @@ WORKDIR /app
 #     (+cu128 local version outranks the plain PyPI 2.7.1, so the CUDA build is
 #      chosen; the assert guards against silently getting the CPU wheel.)
 RUN python -m pip install \
+        --timeout 300 --retries 20 --resume-retries 20 \
         --index-url https://download.pytorch.org/whl/cu128 \
         --extra-index-url https://pypi.org/simple \
         torch==2.7.1 torchvision==0.22.1 \
