@@ -3,8 +3,9 @@
 Containerized build of the **FlashHead streaming REST API** (`server2.py`).
 See [`../README_API.md`](../README_API.md) for the API itself.
 
-The image bundles the full CUDA/PyTorch runtime; the **model weights are mounted at
-runtime** (≈15 GB — never baked into the image).
+The image bundles the full CUDA/PyTorch runtime **and the model weights** — the Dockerfile
+downloads them from Hugging Face during `docker build`, so there is nothing to fetch by hand
+and nothing to mount at runtime.
 
 | | |
 |---|---|
@@ -13,6 +14,7 @@ runtime** (≈15 GB — never baked into the image).
 | Torch | `2.7.1+cu128` · torchvision `0.22.1` · xformers `0.0.31` |
 | Attention | `flash-attn 2.8.0.post2` (prebuilt `cu12torch2.7cxx11abiTRUE-cp310` wheel) |
 | Deps | pinned from a known-good environment → [`requirements-lock.txt`](./requirements-lock.txt) |
+| Weights | downloaded at build time into `/app/models` (`MODEL_VARIANT=lite\|pro\|all`) |
 | Exposes | `8000` |
 
 ---
@@ -50,46 +52,68 @@ From the **repo root** (the build context must include `flash_head/` and `server
 docker build -f docker/Dockerfile -t flashhead-api:latest .
 ```
 
-The `models/` directory is excluded via [`.dockerignore`](../.dockerignore), so the build
-context stays a few MB. First build downloads the CUDA base + torch + flash-attn (several
-GB); subsequent builds are cached.
+The local `models/` directory is excluded via [`.dockerignore`](../.dockerignore), so the
+build context stays a few MB — the weights come from Hugging Face inside the build, not from
+your disk. The first build pulls the CUDA base + torch + flash-attn and the weights (tens of
+GB, expect a while); subsequent builds are cached, and editing code does **not** re-download
+the weights.
 
----
-
-## 3. Get the model weights
-
-The weights are **not** in the image — download them once on the host into `models/`,
-then mount that directory into the container (next step).
+### Which weights get baked in
 
 | Model | Source |
 |-------|--------|
 | `SoulX-FlashHead-1_3B` | 🤗 [huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B) |
 | `wav2vec2-base-960h` | 🤗 [huggingface.co/facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h) |
 
+Only what the selected variant actually loads is fetched:
+
+| `--build-arg MODEL_VARIANT=` | Fetched from the checkpoint repo | Weights size |
+|---|---|---|
+| `lite` *(default)* | `Model_Lite/` + `VAE_LTX/` | ≈ 7.3 GB |
+| `pro` | `Model_Pro/` + `VAE_Wan/` | ≈ 6.2 GB |
+| `all` | both of the above | ≈ 13.5 GB |
+
+plus ≈ 0.4 GB of wav2vec2 (`model.safetensors` only — the TF/`.bin` duplicates are skipped).
+
 ```bash
-pip install "huggingface_hub[cli]"
-# run from the repo root so the paths match the mount below
-huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B --local-dir ./models/SoulX-FlashHead-1_3B
-huggingface-cli download facebook/wav2vec2-base-960h     --local-dir ./models/wav2vec2-base-960h
+# image that can serve both lite and pro
+docker build -f docker/Dockerfile --build-arg MODEL_VARIANT=all -t flashhead-api:all .
 ```
 
-You end up with `models/SoulX-FlashHead-1_3B/` (contains `Model_Lite/` and `Model_Pro/`)
-and `models/wav2vec2-base-960h/` — the two directories the entrypoint expects.
+`MODEL_VARIANT` must cover whatever `MODEL_TYPE` you run with — the entrypoint checks this on
+boot and tells you to rebuild rather than failing halfway through model load.
+
+### Building without the weights
+
+To keep the old behaviour (slim image, weights mounted from the host):
+
+```bash
+docker build -f docker/Dockerfile --build-arg DOWNLOAD_MODELS=0 -t flashhead-api:slim .
+
+# then fetch the weights on the host, from the repo root
+pip install huggingface_hub
+hf download Soul-AILab/SoulX-FlashHead-1_3B --local-dir ./models/SoulX-FlashHead-1_3B
+hf download facebook/wav2vec2-base-960h     --local-dir ./models/wav2vec2-base-960h
+```
+
+then add `-v "$(pwd)/models:/app/models:ro"` to the `docker run` below.
 
 ---
 
-## 4. Run
+## 3. Run
 
-The container needs the GPU and the model weights mounted at `/app/models`:
+The container needs the GPU; the weights are already inside it:
 
 ```bash
 docker run --rm --gpus all \
     -p 8000:8000 \
-    -v "$(pwd)/models:/app/models:ro" \
     --shm-size=8g \
     --name flashhead-api \
     flashhead-api:latest
 ```
+
+> Do **not** mount `-v .../models:/app/models` on a normal build — an empty or partial host
+> directory shadows the baked-in weights and the container will refuse to start.
 
 On boot it auto-loads the **lite** model and serves on `:8000`. When you see the model
 finish loading, it's ready. Check it:
@@ -109,31 +133,30 @@ docker compose -f docker/docker-compose.yml up --build
 
 ---
 
-## 5. Configuration (environment variables)
+## 4. Configuration (environment variables)
 
 Pass with `-e VAR=value` (or the `environment:` block in Compose):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_TYPE` | `lite` | `lite` (fast) or `pro` (higher quality) |
+| `MODEL_TYPE` | `lite` | `lite` (fast) or `pro` (higher quality) — must be covered by the image's `MODEL_VARIANT` |
 | `PORT` | `8000` | Server port (also update `-p`) |
-| `CKPT_DIR` | `models/SoulX-FlashHead-1_3B` | Checkpoint dir (inside the container) |
-| `WAV2VEC_DIR` | `models/wav2vec2-base-960h` | Wav2Vec2 dir |
+| `CKPT_DIR` | `/app/models/SoulX-FlashHead-1_3B` | Checkpoint dir (inside the container) |
+| `WAV2VEC_DIR` | `/app/models/wav2vec2-base-960h` | Wav2Vec2 dir |
 | `IDLE_TIMEOUT` | `300` | Seconds before an idle session is auto-deleted |
 | `GC_INTERVAL` | `60` | Session GC check interval |
 | `AUTOLOAD` | `1` | `0` = start without loading; load later via `POST /model/load` |
 
 ```bash
-# example: run the PRO model
-docker run --rm --gpus all -p 8000:8000 \
-    -v "$(pwd)/models:/app/models:ro" --shm-size=8g \
+# example: run the PRO model (image must be built with MODEL_VARIANT=pro or =all)
+docker run --rm --gpus all -p 8000:8000 --shm-size=8g \
     -e MODEL_TYPE=pro \
-    flashhead-api:latest
+    flashhead-api:all
 ```
 
 ---
 
-## 6. Test the container
+## 5. Test the container
 
 The API is on `localhost:8000`, so drive it **from the host** exactly like the bare-metal
 server (`test_stream.py` targets port 8000):
@@ -162,17 +185,25 @@ streams back as 13 MP4 segments; warm generation ≈ **11 s (~3.2× real-time)**
 
 ---
 
-## 7. Notes & troubleshooting
+## 6. Notes & troubleshooting
 
 - **`could not select device driver "" with capabilities: [[gpu]]`** → the NVIDIA Container
   Toolkit isn't installed/configured; redo step 1 and restart Docker.
 - **First request is slow (~80 s)** — one-time CUDA warmup; every later request is ~2 s to
   first segment. Send a throwaway request after startup to pre-warm.
-- **`AUTOLOAD=1 but model directories were not found`** — you didn't mount the weights.
-  Add `-v "$(pwd)/models:/app/models:ro"`, or set `-e AUTOLOAD=0` to load via the API.
+- **`AUTOLOAD=1 but model directories were not found`** — on a normal build the weights are
+  in the image, so this means a host `-v .../models:/app/models` mount is shadowing them
+  (drop it), or the image was built with `DOWNLOAD_MODELS=0` (then the mount is required).
+  `-e AUTOLOAD=0` boots without a model and lets you load one via the API.
+- **`MODEL_TYPE=pro needs .../Model_Pro`** — the image was built `lite`-only. Rebuild with
+  `--build-arg MODEL_VARIANT=pro` (or `=all`).
+- **Build fails downloading weights** — Hugging Face rate limit or a dropped connection.
+  Re-run the build (finished layers are cached); the download step resumes from scratch but
+  the CUDA/torch layers do not rebuild.
 - **One model / one GPU** — inference is serialized on a single pipeline lock. For
   concurrency run multiple containers (one GPU each) behind a load balancer.
-- **Image size** (~15 GB) is mostly the CUDA + torch runtime. `/dev/shm` is raised to 8 GB
-  (`--shm-size=8g`) to avoid PyTorch shared-memory errors.
+- **Image size** (~23 GB for `lite`, ~29 GB for `all`) — CUDA + torch runtime plus the baked
+  weights. Build with `--build-arg DOWNLOAD_MODELS=0` for the ~15 GB weightless image.
+  `/dev/shm` is raised to 8 GB (`--shm-size=8g`) to avoid PyTorch shared-memory errors.
 - **Driver/CUDA:** the container's CUDA 12.8 userspace runs on the host driver via the
   toolkit — the same combination already working on this machine bare-metal.

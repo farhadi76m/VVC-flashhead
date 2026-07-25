@@ -30,10 +30,25 @@ if [[ "$AUTOLOAD" == "1" ]]; then
     echo "[entrypoint] ERROR: AUTOLOAD=1 but model directories were not found:" >&2
     echo "             CKPT_DIR   = $CKPT_DIR" >&2
     echo "             WAV2VEC_DIR= $WAV2VEC_DIR" >&2
-    echo "             Mount the weights, e.g.:  -v \"\$(pwd)/models:/app/models:ro\"" >&2
+    echo "             The image normally bakes these in at build time; this build" >&2
+    echo "             was made with --build-arg DOWNLOAD_MODELS=0, or the weights" >&2
+    echo "             are shadowed by an empty mount at /app/models." >&2
+    echo "             Mount them, e.g.:  -v \"\$(pwd)/models:/app/models:ro\"" >&2
     echo "             (or set AUTOLOAD=0 to boot without a model and load it via POST /model/load)" >&2
     exit 1
   fi
+
+  # The image only carries the variant chosen at build time (MODEL_VARIANT).
+  if [[ "$MODEL_TYPE" == "lite" ]]; then required=( Model_Lite VAE_LTX )
+  else                                    required=( Model_Pro  VAE_Wan  ); fi
+  for sub in "${required[@]}"; do
+    if [[ ! -d "$CKPT_DIR/$sub" ]]; then
+      echo "[entrypoint] ERROR: MODEL_TYPE=$MODEL_TYPE needs $CKPT_DIR/$sub, which is missing." >&2
+      echo "             Rebuild with:  --build-arg MODEL_VARIANT=$MODEL_TYPE   (or =all for both)" >&2
+      exit 1
+    fi
+  done
+
   ARGS+=( --model-type "$MODEL_TYPE" --ckpt-dir "$CKPT_DIR" --wav2vec-dir "$WAV2VEC_DIR" )
 fi
 
