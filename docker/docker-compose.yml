@@ -1,0 +1,37 @@
+# FlashHead Streaming API — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+# Run from the repo root:
+#     docker compose -f docker/docker-compose.yml up --build
+#
+# Requires: Docker + NVIDIA Container Toolkit (GPU passthrough).
+# Model weights are mounted from ./models on the host (≈15 GB) — not baked in.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  flashhead-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: flashhead-api:latest
+    container_name: flashhead-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # host ./models  →  /app/models  (read-only)
+      - ../models:/app/models:ro
+    environment:
+      MODEL_TYPE: "lite"        # lite | pro
+      # AUTOLOAD: "0"           # uncomment to boot WITHOUT loading a model
+      # PORT: "8000"
+    shm_size: "8gb"
+    restart: unless-stopped
+
+    # GPU access (Compose v2.30+). If your Compose rejects `gpus:`, comment it
+    # out and use the `deploy:` block below instead.
+    gpus: all
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

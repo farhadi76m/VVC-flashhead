@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime
 
 from flash_head.inference import get_pipeline, get_base_data, get_infer_params, get_audio_embedding, run_pipeline
-
+from flash_head.utils.facecrop import postprocess_image, postprocess_image2
 def _validate_args(args):
     # Basic check
     assert args.ckpt_dir is not None, "Please specify FlashHead model checkpoint directory."
@@ -185,8 +185,14 @@ def generate(args):
 
             # inference
             video = run_pipeline(pipeline, audio_embedding)
-            video = video[motion_frames_num:]
+            if args.use_face_crop : 
+                video = postprocess_image2(video, 
+                    pipeline.cond_image_tensor_dict['meta']['original_image'],
+                    pipeline.cond_image_tensor_dict['meta']['boxes']
+                    )
 
+            video = video[motion_frames_num:]
+            
             torch.cuda.synchronize()
             end_time = time.time()
             if rank == 0:

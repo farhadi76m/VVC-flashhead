@@ -1,0 +1,35 @@
+# ── version control ──────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── large / runtime-mounted assets (never bake these into the image) ─────────
+models/
+examples/
+sample_results/
+gradio_results/
+gradio_results_multigpu/
+assets/
+tools/
+logs/
+
+# ── python caches & virtual envs ─────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ── docs / editor / OS cruft ─────────────────────────────────────────────────
+*.md
+.vscode/
+.idea/
+.DS_Store
+
+# ── stray local outputs ──────────────────────────────────────────────────────
+output.mp4
+*.bin
+turn*_seg*.mp4
+seg_*.mp4
