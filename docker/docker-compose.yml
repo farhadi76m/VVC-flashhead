@@ -19,24 +19,36 @@ services:
     container_name: flashhead-api
     ports:
       - "8000:8000"
-    # volumes:
-    #   # Only needed with DOWNLOAD_MODELS=0 — this mount SHADOWS the weights
-    #   # baked into the image, so leave it commented out for a normal build.
-    #   - ../models:/app/models:ro
+    volumes:
+      # WSL2 GPU passthrough — see the `devices:` note below.
+      - /usr/lib/wsl:/usr/lib/wsl
+      # # Only needed with DOWNLOAD_MODELS=0 — this mount SHADOWS the weights
+      # # baked into the image, so leave it commented out for a normal build.
+      # - ../models:/app/models:ro
     environment:
       MODEL_TYPE: "lite"        # lite | pro
+      # WSL2 ships its GPU driver in /usr/lib/wsl/lib. It must win over the
+      # image's /usr/local/cuda-12.8/compat/libcuda.so.1, which needs a real
+      # kernel driver that WSL does not have.
+      LD_LIBRARY_PATH: "/usr/lib/wsl/lib"
       # AUTOLOAD: "0"           # uncomment to boot WITHOUT loading a model
       # PORT: "8000"
     shm_size: "8gb"
     restart: unless-stopped
 
-    # GPU access (Compose v2.30+). If your Compose rejects `gpus:`, comment it
-    # out and use the `deploy:` block below instead.
-    gpus: all
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # GPU access on WSL2 (Docker Desktop backend).
+    #
+    # `gpus: all` / the `deploy:` reservation both go through the NVIDIA
+    # container hook, which here auto-detects 'legacy' mode (no CSV specs at
+    # /etc/nvidia-container-runtime/host-files-for-container.d) and so looks
+    # for /dev/nvidia* + a matching kernel driver. WSL2 has neither: it exposes
+    # the GPU as /dev/dxg and the driver libs as a mount. The hook therefore
+    # fails the `cuda>=12.8` check, and skipping that check with
+    # NVIDIA_DISABLE_REQUIRE=1 only gets you a container with no visible GPU.
+    #
+    # Passing the device by hand skips the hook entirely and works:
+    devices:
+      - /dev/dxg
+    #
+    # On a native Linux host with a working toolkit, drop `devices:`, the
+    # /usr/lib/wsl mount and LD_LIBRARY_PATH, and use `gpus: all` instead.

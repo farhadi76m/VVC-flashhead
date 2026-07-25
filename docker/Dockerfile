@@ -110,6 +110,16 @@ RUN set -euf; \
 COPY docker/requirements-lock.txt /tmp/requirements-lock.txt
 RUN python -m pip install -r /tmp/requirements-lock.txt
 
+# ── 6) C/C++ toolchain — torch.compile (inductor) shells out to a compiler at
+#     runtime. The CUDA *runtime* base image ships without one, so the first
+#     /session call dies with "Failed to find C compiler".
+#     Deliberately placed BELOW the weights + deps: adding it here costs one
+#     small layer instead of re-triggering the ~16 GB of downloads above.
+#     Fold it into the apt block at the top on the next from-scratch build.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── application code ─────────────────────────────────────────────────────────
 COPY flash_head/ ./flash_head/
 COPY server2.py test_stream.py generate_video.py ./
