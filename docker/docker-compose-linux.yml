@@ -26,15 +26,15 @@ services:
       dockerfile: docker/Dockerfile
       args:
         MODEL_VARIANT: "lite"     # lite | pro | all  (weights baked into image)
-        # DOWNLOAD_MODELS: "0"    # skip the download and mount ../models instead
+        DOWNLOAD_MODELS: "0"    # skip the download and mount ../models instead
     image: flashhead-api:latest
     container_name: flashhead-api
     ports:
       - "8000:8000"
-    # volumes:
+    volumes:
     #   # Only needed with DOWNLOAD_MODELS=0 — this mount SHADOWS the weights
     #   # baked into the image, so leave it commented out for a normal build.
-    #   - ../models:/app/models:ro
+      - ../models:/app/models:ro
     environment:
       MODEL_TYPE: "lite"          # lite | pro
       # AUTOLOAD: "0"             # uncomment to boot WITHOUT loading a model

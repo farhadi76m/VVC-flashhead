@@ -48,16 +48,20 @@ WORKDIR /app
 # ── 1) torch stack from the CUDA-12.8 wheel index ────────────────────────────
 #     (+cu128 local version outranks the plain PyPI 2.7.1, so the CUDA build is
 #      chosen; the assert guards against silently getting the CPU wheel.)
-RUN python -m pip install \
-        --timeout 300 --retries 20 --resume-retries 20 \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install \
+        --timeout 300 \
+        --retries 10 \
+        --resume-retries 10 \
         --index-url https://download.pytorch.org/whl/cu128 \
-        --extra-index-url https://pypi.org/simple \
-        torch==2.7.1 torchvision==0.22.1 \
+        torch==2.7.1+cu128 \
+        torchvision==0.22.1+cu128 \
  && python -c "import torch, torchvision; print('torch', torch.__version__); assert torch.version.cuda == '12.8', torch.version.cuda"
+
 
 # ── 2) xformers 0.0.31 — PyPI abi3 wheel, compiled for CUDA 12.8 ──────────────
 #     (--no-deps: torch/numpy already pinned; nothing else to resolve)
-RUN python -m pip install --no-deps xformers==0.0.31
+RUN python -m pip install --no-deps xformers==0.0.31   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # ── 3) flash-attention — prebuilt wheel (cu12 · torch2.7 · cxx11abiTRUE · cp310)
 RUN python -m pip install --no-deps \
