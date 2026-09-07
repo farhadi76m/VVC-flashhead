@@ -64,8 +64,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN python -m pip install --no-deps xformers==0.0.31   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # ── 3) flash-attention — prebuilt wheel (cu12 · torch2.7 · cxx11abiTRUE · cp310)
-RUN python -m pip install --no-deps \
-        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl"
+#RUN python -m pip install --no-deps \
+#        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl"
+# ── 3) flash-attention — prebuilt wheel (cu12 · torch2.7 · cxx11abiTRUE · cp310)
+# ── 3) flash-attention — prebuilt wheel (cu12 · torch2.7 · cxx11abiTRUE · cp310)
+RUN apt-get update && apt-get install -y --no-install-recommends aria2 \
+    && aria2c -x 16 -s 16 -k 1M -d /tmp \
+        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl" \
+    && python -m pip install --no-deps /tmp/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl \
+    && rm -f /tmp/flash_attn-*.whl \
+    && apt-get purge -y aria2 && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── 4) model weights — downloaded here, straight into the image ──────────────
 #     Kept ABOVE the app layers so editing code (or the dep lock) never forces
@@ -80,7 +89,8 @@ ARG HF_WAV2VEC_REPO=facebook/wav2vec2-base-960h
 
 # hf_transfer = rust-backed multipart downloader; ~15 GB over a single stream
 # is otherwise the slowest part of the build by far.
-RUN python -m pip install "huggingface_hub==0.36.2" hf_transfer
+RUN python -m pip install "huggingface_hub==0.36.2" hf_transfer -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 
 ENV CKPT_DIR=/app/models/SoulX-FlashHead-1_3B \
     WAV2VEC_DIR=/app/models/wav2vec2-base-960h
@@ -112,7 +122,8 @@ RUN set -euf; \
 
 # ── 5) remaining pinned dependencies (known-good freeze) ─────────────────────
 COPY docker/requirements-lock.txt /tmp/requirements-lock.txt
-RUN python -m pip install -r /tmp/requirements-lock.txt
+RUN python -m pip install -r /tmp/requirements-lock.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 
 # ── 6) C/C++ toolchain — torch.compile (inductor) shells out to a compiler at
 #     runtime. The CUDA *runtime* base image ships without one, so the first
