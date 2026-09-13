@@ -3,20 +3,14 @@
 # ─────────────────────────────────────────────────────────────────────────── #
 #  CUDA 12.8 · cuDNN 9 · Python 3.10 · torch 2.7.1+cu128 · flash-attn 2.8.0    #
 #                                                                             #
-#  Model weights are DOWNLOADED AT BUILD TIME into /app/models — no manual     #
-#  download, no host mount needed. Select what gets baked in with             #
-#  --build-arg MODEL_VARIANT=lite|pro|all   (default: lite, ≈8 GB of weights) #
+#  Model weights are NOT included. Mount host checkpoints at /checkpoints and #
+#  select them at runtime through POST /model/load.                            #
 #                                                                             #
 #  Build (from repo root):                                                     #
 #      docker build -f docker/Dockerfile -t flashhead-api:latest .            #
-#      docker build -f docker/Dockerfile --build-arg MODEL_VARIANT=all \      #
-#          -t flashhead-api:all .                                             #
 #  Run:                                                                        #
-#      docker run --rm --gpus all -p 8000:8000 --shm-size=8g flashhead-api    #
-#                                                                             #
-#  Prefer the old behaviour (weights mounted from the host)? Build with       #
-#      --build-arg DOWNLOAD_MODELS=0                                          #
-#  and run with  -v "$(pwd)/models:/app/models:ro".                           #
+#      docker run --rm --gpus all -p 8000:8000 --shm-size=8g \                #
+#          -v "$(pwd)/models:/checkpoints:ro" flashhead-api                   #
 ###############################################################################
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
@@ -76,49 +70,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends aria2 \
     && apt-get purge -y aria2 && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 4) model weights — downloaded here, straight into the image ──────────────
-#     Kept ABOVE the app layers so editing code (or the dep lock) never forces
-#     a re-download. Only what the chosen variant actually loads is fetched:
-#       lite → Model_Lite + VAE_LTX   pro → Model_Pro + VAE_Wan   all → both
-#     (`assets/` are demo videos; wav2vec2 ships torch + TF + bin copies of the
-#      same weights — transformers loads model.safetensors, so skip the rest.)
-ARG DOWNLOAD_MODELS=1
-ARG MODEL_VARIANT=lite
-ARG HF_FLASHHEAD_REPO=Soul-AILab/SoulX-FlashHead-1_3B
-ARG HF_WAV2VEC_REPO=facebook/wav2vec2-base-960h
+# ── 4) externally managed model weights ──────────────────────────────────────
+ENV CKPT_DIR=/checkpoints/SoulX-FlashHead-1_3B \
+    WAV2VEC_DIR=/checkpoints/wav2vec2-base-960h \
+    AUTOLOAD=0
 
-# hf_transfer = rust-backed multipart downloader; ~15 GB over a single stream
-# is otherwise the slowest part of the build by far.
-RUN python -m pip install "huggingface_hub==0.36.2" hf_transfer -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-
-ENV CKPT_DIR=/app/models/SoulX-FlashHead-1_3B \
-    WAV2VEC_DIR=/app/models/wav2vec2-base-960h
-
-# -f (noglob): $inc must word-split into separate patterns, but the shell must
-# not try to expand `Model_Lite/*` against the local filesystem.
-RUN set -euf; \
-    if [ "$DOWNLOAD_MODELS" != "1" ]; then \
-        echo "[build] DOWNLOAD_MODELS=0 — skipping, mount weights at /app/models"; \
-        mkdir -p /app/models; exit 0; \
-    fi; \
-    case "$MODEL_VARIANT" in \
-      lite) inc='Model_Lite/* VAE_LTX/*' ;; \
-      pro)  inc='Model_Pro/* VAE_Wan/*'  ;; \
-      all)  inc='Model_Lite/* VAE_LTX/* Model_Pro/* VAE_Wan/*' ;; \
-      *)    echo "[build] ERROR: MODEL_VARIANT must be lite|pro|all (got '$MODEL_VARIANT')" >&2; exit 1 ;; \
-    esac; \
-    export HF_HUB_ENABLE_HF_TRANSFER=1; \
-    echo "[build] downloading $HF_FLASHHEAD_REPO ($MODEL_VARIANT)"; \
-    hf download "$HF_FLASHHEAD_REPO" \
-        --local-dir "$CKPT_DIR" \
-        --include $inc '*.json' ; \
-    echo "[build] downloading $HF_WAV2VEC_REPO"; \
-    hf download "$HF_WAV2VEC_REPO" \
-        --local-dir "$WAV2VEC_DIR" \
-        --exclude 'tf_model.h5' 'pytorch_model.bin' ; \
-    rm -rf "$CKPT_DIR/.cache" "$WAV2VEC_DIR/.cache"; \
-    du -sh "$CKPT_DIR" "$WAV2VEC_DIR"
+# Model checkpoints are managed outside the image. Mount a host directory at
+# /checkpoints and load its checkpoint paths through POST /model/load.
+RUN mkdir -p /checkpoints
 
 # ── 5) remaining pinned dependencies (known-good freeze) ─────────────────────
 COPY docker/requirements-lock.txt /tmp/requirements-lock.txt

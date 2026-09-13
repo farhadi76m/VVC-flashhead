@@ -16,28 +16,29 @@
 #   • Docker Compose v2.30+ for the `gpus:` key (older versions: use the
 #     `deploy:` block at the bottom of this file instead).
 #
-# Model weights are downloaded by the Dockerfile during `build` — nothing to
-# fetch by hand, no host mount needed.
+# Model weights stay on the host. CHECKPOINTS_DIR selects the host directory
+# mounted read-only into the container (default: the repository's models dir).
 # ─────────────────────────────────────────────────────────────────────────────
 services:
   flashhead-api:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      args:
-        MODEL_VARIANT: "lite"     # lite | pro | all  (weights baked into image)
-        DOWNLOAD_MODELS: "0"    # skip the download and mount ../models instead
     image: flashhead-api:latest
     container_name: flashhead-api
     ports:
       - "8000:8000"
     volumes:
-    #   # Only needed with DOWNLOAD_MODELS=0 — this mount SHADOWS the weights
-    #   # baked into the image, so leave it commented out for a normal build.
-      - ../models:/app/models:ro
+      # Set CHECKPOINTS_DIR to an absolute host path if the checkpoints are not
+      # stored in the repository's models directory.
+      - ${CHECKPOINTS_DIR:-../models}:/checkpoints:ro
     environment:
-      MODEL_TYPE: "lite"          # lite | pro
-      # AUTOLOAD: "0"             # uncomment to boot WITHOUT loading a model
+      # Start without loading a model. Select a mounted checkpoint via the API:
+      # curl -X POST http://localhost:8000/model/load \
+      #   -F ckpt_dir=/checkpoints/SoulX-FlashHead-1_3B \
+      #   -F wav2vec_dir=/checkpoints/wav2vec2-base-960h \
+      #   -F model_type=lite
+      AUTOLOAD: "0"
       # PORT: "8000"
       # Pick specific GPUs instead of `gpus: all` below, e.g. NVIDIA_VISIBLE_DEVICES: "0"
     shm_size: "8gb"
