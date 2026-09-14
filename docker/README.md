@@ -1,244 +1,170 @@
-# FlashHead API — Docker
+# FlashHead API on native Linux
 
-Talking-head video generation. Send a face image + audio, get MP4 video segments
-streamed back as they are generated.
+This guide uses **only** `docker/docker-compose-linux.yml`. It starts the
+container with checkpoints mounted from the host, then loads the model through
+the API.
 
-- **Model:** lite — baked into the image, nothing to download at runtime
-- **Face crop:** on by default, nothing to configure
-- **Port:** 8000
+Run every command from the repository root.
 
----
+## 1. Set the checkpoint directory
 
-## 1. Requirements
+`CHECKPOINTS_DIR` must be the **host directory that contains both** model
+directories:
 
-- NVIDIA GPU with ~12 GB free VRAM
-- NVIDIA driver 525 or newer
-- Docker with GPU access
-
-Check the GPU is visible:
-
-```bash
-nvidia-smi
+```text
+/data/mehdi/models/
+├── SoulX-FlashHead-1_3B/
+└── wav2vec2-base-960h/
 ```
 
-**Pick your compose file.** Every command below uses `docker/docker-compose.yml`,
-which is set up for **Docker Desktop on WSL2**. On a **native Linux** host use
-`docker/docker-compose-linux.yml` instead — same settings, different GPU
-passthrough. See [the note at the end](#note-on-gpu-passthrough).
-
----
-
-## 2. Build
-
-Run from the repo root, **not** from `docker/`:
+Set it before starting Docker:
 
 ```bash
-docker compose -f docker/docker-compose.yml build
+export CHECKPOINTS_DIR=/data/mehdi/models
 ```
 
-Takes 20–40 minutes and downloads ~7.7 GB of weights into the image. Final image
-is about 23 GB. You only do this once.
+Docker mounts this directory read-only at `/checkpoints` inside the container.
+Therefore the two model paths used by the API are:
 
----
+```text
+/checkpoints/SoulX-FlashHead-1_3B
+/checkpoints/wav2vec2-base-960h
+```
 
-## 3. Run
+## 2. Optional: choose the host port
+
+The API always listens on port `8000` inside the container. `HOST_PORT` changes
+only the port exposed on the Linux host. It defaults to `8000`.
+
+For example, use port `8100` when another service already uses port `8000`:
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d
+export HOST_PORT=8100
 ```
 
-The model loads at startup and is ready in about **20 seconds**.
+If port `8000` is free, omit this variable.
 
-**Important:** the *first* generate request is slow — around **2 minutes** —
-because PyTorch compiles the model on first use. Every request after that is
-fast (~15 seconds). Send one throwaway request after startup so the first real
-user does not wait.
+## 3. Build, recreate, and start
 
----
-
-## 4. Check it works
+This is the full command to build the image, recreate the container, and start
+it in the background:
 
 ```bash
-curl http://localhost:8000/model/status
+docker compose -f docker/docker-compose-linux.yml up -d --build --force-recreate
 ```
 
-Expected:
+The `--force-recreate` flag ensures Docker replaces the existing
+`flashhead-api` container with one using the current checkpoint mount and port
+settings.
+
+## 4. Verify the checkpoint mount
+
+Check that the service is running and that Docker can see the model folders:
+
+```bash
+docker ps --filter name=flashhead-api
+docker exec flashhead-api ls /checkpoints
+```
+
+Expected model folders:
+
+```text
+SoulX-FlashHead-1_3B
+wav2vec2-base-960h
+```
+
+## 5. Load the model
+
+The container starts with `AUTOLOAD=0`, so the model is **not** loaded until you
+call `/model/load`.
+
+Set the API URL once. It automatically uses port `8000` if `HOST_PORT` was not
+set:
+
+```bash
+export API_URL="http://localhost:${HOST_PORT:-8000}"
+```
+
+Load the lite model from the mounted checkpoint paths:
+
+```bash
+curl -X POST "$API_URL/model/load" \
+  -F "ckpt_dir=/checkpoints/SoulX-FlashHead-1_3B" \
+  -F "wav2vec_dir=/checkpoints/wav2vec2-base-960h" \
+  -F "model_type=lite"
+```
+
+Expected response:
 
 ```json
-{"loaded":true,"model_type":"lite", ...}
+{"status":"loaded","model_type":"lite"}
 ```
 
-`"loaded":true` means it is ready. Interactive API docs: <http://localhost:8000/docs>
-
----
-
-## 5. Use the API
-
-Three steps: create a session with a face image, send audio, delete the session.
-
-### Create a session
+## 6. Test that it is ready
 
 ```bash
-curl -X POST http://localhost:8000/session \
-  -F "image=@face.png"
+curl "$API_URL/model/status"
 ```
+
+Expected response:
 
 ```json
-{"session_id":"a1b2c3d4-...","status":"ready"}
+{"loaded":true,"model_type":"lite","ckpt_dir":"/checkpoints/SoulX-FlashHead-1_3B","wav2vec_dir":"/checkpoints/wav2vec2-base-960h"}
 ```
 
-Keep the `session_id`. One session = one person's face. Reuse it for every turn
-of the conversation — the image is only processed once.
+The interactive API documentation is at:
 
-### Generate video from audio
+```text
+$API_URL/docs
+```
+
+## Complete copy-paste setup
+
+For a service published on port `8100`:
 
 ```bash
-curl -X POST http://localhost:8000/session/<SESSION_ID>/generate \
-  -F "audio=@speech.wav" \
-  -o output.bin
+export CHECKPOINTS_DIR=/data/mehdi/models
+export HOST_PORT=8100
+export API_URL="http://localhost:${HOST_PORT}"
+
+docker compose -f docker/docker-compose-linux.yml up -d --build --force-recreate
+
+docker exec flashhead-api ls /checkpoints
+
+curl -X POST "$API_URL/model/load" \
+  -F "ckpt_dir=/checkpoints/SoulX-FlashHead-1_3B" \
+  -F "wav2vec_dir=/checkpoints/wav2vec2-base-960h" \
+  -F "model_type=lite"
+
+curl "$API_URL/model/status"
 ```
 
-Audio should be **WAV, 16 kHz, mono**.
-
-The response is a `multipart/x-mixed-replace` stream. Each part is a complete MP4
-covering ~3 seconds of video, sent as soon as it is ready — so playback can start
-before the full clip is finished. Each part carries an `X-Segment-Index` header.
-
-Measured on an RTX 4090: ~40 seconds of speech → 13 segments in **14 seconds**
-(after warmup). Generation is faster than real time, so playback keeps up.
-
-### Delete the session
+## Useful commands
 
 ```bash
-curl -X DELETE http://localhost:8000/session/<SESSION_ID>
+# View service logs
+docker compose -f docker/docker-compose-linux.yml logs -f
+
+# Stop and remove the container
+docker compose -f docker/docker-compose-linux.yml down
+
+# Rebuild, recreate, and start after changing code or Docker files
+docker compose -f docker/docker-compose-linux.yml up -d --build --force-recreate
 ```
 
-Idle sessions are cleaned up automatically after 5 minutes.
+## Requirements and troubleshooting
 
-### Working example
+- Native Linux host with an NVIDIA GPU and about 12 GB free VRAM for the lite
+  model.
+- NVIDIA driver 525 or newer (`nvidia-smi`).
+- Docker Compose and NVIDIA Container Toolkit. Verify GPU passthrough with:
 
-`test_stream.py` shows how to consume the stream and joins the segments into one
-playable file:
+  ```bash
+  docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+  ```
 
-```bash
-python test_stream.py live face.png speech.wav
-```
-
----
-
-## 6. Day-to-day commands
-
-```bash
-# logs
-docker compose -f docker/docker-compose.yml logs -f
-
-# stop
-docker compose -f docker/docker-compose.yml down
-
-# start
-docker compose -f docker/docker-compose.yml up -d
-
-# restart
-docker compose -f docker/docker-compose.yml restart
-```
-
-After changing code (`server2.py`, `flash_head/`), rebuild and restart:
-
-```bash
-docker compose -f docker/docker-compose.yml build
-docker compose -f docker/docker-compose.yml up -d
-```
-
-Code changes rebuild in under a minute — the weights are cached and are not
-downloaded again.
-
----
-
-## 7. All endpoints
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/model/status` | Is the model loaded |
-| `POST` | `/session` | Create session (upload face image) |
-| `POST` | `/session/{id}/generate` | Audio in → video segments out |
-| `PATCH` | `/session/{id}/image` | Change the face mid-session |
-| `GET` | `/session/{id}/status` | Session info |
-| `DELETE` | `/session/{id}` | Delete session |
-| `GET` | `/sessions` | List active sessions |
-
----
-
-## 8. Troubleshooting
-
-**`{"loaded":false}` or connection refused**
-
-Still starting — give it ~20 seconds. If it stays down, check the logs:
-
-```bash
-docker compose -f docker/docker-compose.yml logs -f
-```
-
-**First request takes ~2 minutes**
-
-Normal. PyTorch compiles the model on first use; later requests take ~15 s.
-See section 3.
-
-**Port 8000 already in use**
-
-Edit `docker/docker-compose.yml` and change the left-hand number:
-
-```yaml
-ports:
-  - "8100:8000"
-```
-
-**GPU not detected / CUDA errors**
-
-Confirm the container sees the GPU:
-
-```bash
-docker exec flashhead-api python -c "import torch; print(torch.cuda.is_available())"
-```
-
-Must print `True`. If it prints `False`, see the note below.
-
-**Out of memory**
-
-Run only one generate request at a time per GPU. Lite needs ~12 GB.
-
----
-
-## Note on GPU passthrough
-
-There are two compose files — pick the one that matches your host:
-
-| Host | File |
-|---|---|
-| Docker Desktop on **WSL2** | `docker/docker-compose.yml` |
-| **Native Linux** server | `docker/docker-compose-linux.yml` |
-
-They differ only in how the GPU is handed to the container.
-
-WSL2 exposes the GPU as `/dev/dxg` instead of `/dev/nvidia*`, so the WSL2 file
-passes that device directly rather than using `gpus: all` — the NVIDIA container
-hook misdetects the mode on WSL and the container ends up with no usable GPU. It
-also mounts `/usr/lib/wsl` and sets `LD_LIBRARY_PATH` so the WSL driver libs win
-over the image's CUDA compat libs.
-
-The Linux file uses `gpus: all` and none of those workarounds — on a native host
-they would break CUDA instead of fixing it. It needs the NVIDIA Container Toolkit
-installed:
-
-```bash
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# verify
-docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
-```
-
-`gpus:` needs Docker Compose v2.30 or newer; the file carries a commented
-`deploy:` block to use instead on older versions.
-
-The comments in both files explain the same thing.
+- If `/model/status` returns `{"loaded":false}`, repeat the `/model/load`
+  command above.
+- If the checkpoint folders are missing, verify `CHECKPOINTS_DIR` points to
+  their parent directory, then rerun the `up -d --build --force-recreate`
+  command.

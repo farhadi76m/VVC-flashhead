@@ -27,7 +27,9 @@ services:
     image: flashhead-api:latest
     container_name: flashhead-api
     ports:
-      - "8000:8000"
+      # Override the host-side port when 8000 is already in use, for example:
+      # HOST_PORT=8100 docker compose -f docker/docker-compose-linux.yml up -d
+      - "${HOST_PORT:-8000}:8000"
     volumes:
       # Set CHECKPOINTS_DIR to an absolute host path if the checkpoints are not
       # stored in the repository's models directory.
