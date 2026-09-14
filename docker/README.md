@@ -168,3 +168,51 @@ docker compose -f docker/docker-compose-linux.yml up -d --build --force-recreate
 - If the checkpoint folders are missing, verify `CHECKPOINTS_DIR` points to
   their parent directory, then rerun the `up -d --build --force-recreate`
   command.
+
+## Test generation with cURL
+
+Run this only after `/model/status` returns `"loaded":true`. Use an image of a
+face and a WAV audio file (16 kHz mono is recommended).
+
+### 1. Upload the face image
+
+```bash
+curl -X POST "$API_URL/session" \
+  -F "image=@/path/to/face.png"
+```
+
+Example response:
+
+```json
+{"session_id":"a1b2c3d4-...","status":"ready"}
+```
+
+Copy the returned ID into `SESSION_ID`:
+
+```bash
+export SESSION_ID="a1b2c3d4-..."
+```
+
+### 2. Send audio and save the generated stream
+
+```bash
+curl -N -sS -X POST "$API_URL/session/$SESSION_ID/generate" \
+  -F "audio=@/path/to/speech.wav" \
+  --output generated_stream.bin
+```
+
+The API returns a multipart stream containing several MP4 segments. The cURL
+command saves that raw stream as `generated_stream.bin`; it is not itself a
+playable MP4 file.
+
+Split the stream and join its MP4 segments into `output.mp4`:
+
+```bash
+python test_stream.py split generated_stream.bin output.mp4
+```
+
+### 3. Delete the test session
+
+```bash
+curl -X DELETE "$API_URL/session/$SESSION_ID"
+```
